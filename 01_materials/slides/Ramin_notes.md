@@ -17,3 +17,13 @@ in practical, does temp. = 0 give us a fully deterministic output? I assume not.
 However, if you run the same thing on two different machines, you might face different outputs bc of low-level computation differences (rounding, floating-point precision... in the GPU calculations w/ matrices)
 
 how Retrieval-Augmented Generation (RAG) changes the probability of a model? Usually, RAG methods feed additional context to the model, which can change the probability distribution of the output
+
+
+Syncing fork
+
+1 - Sync on GitHub (your forked repo) 
+2 - Do a git pull in your local repo
+git pull origin main - in the same directory on your local machine
+
+
+
