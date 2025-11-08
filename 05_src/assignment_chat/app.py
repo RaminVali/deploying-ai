@@ -1,4 +1,4 @@
-from assignment_chat.main import get_animals_chat_agent
+from assignment_chat.main import get_assignment_chat_agent
 from langchain_core.messages import HumanMessage, AIMessage
 import gradio as gr
 from dotenv import load_dotenv
@@ -8,7 +8,7 @@ from utils.logger import get_logger
 
 _logs = get_logger(__name__)
 
-llm = get_animals_chat_agent()
+llm = get_assignment_chat_agent()
 
 load_dotenv('.secrets')  #When we are doing dot-env then we have to be in the right pATH, make sure your path is good. When you run the app then go to the top folder of the APP.
 
@@ -16,7 +16,7 @@ if not os.environ.get("OPENAI_API_KEY"):
     raise ValueError("Missing OPENAI_API_KEY environment variable")
 
 
-def animals_chat(message: str, history: list[dict]) -> str:
+def assignment_chat(message: str, history: list[dict]) -> str:
     langchain_messages = []
     n = 0
     _logs.debug(f"History: {history}")
@@ -37,10 +37,10 @@ def animals_chat(message: str, history: list[dict]) -> str:
     return response['messages'][len(response['messages']) - 1].content
 
 chat = gr.ChatInterface(
-    fn=animals_chat,
+    fn=assignment_chat,
     type="messages"
 )
 
 if __name__ == "__main__":
-    _logs.info('Starting Animals Chat App...')
+    _logs.info('Starting Assignment Chat App...')
     chat.launch()
