@@ -7,7 +7,7 @@ from typing_extensions import TypedDict, Annotated
 import operator
 
 from dotenv import load_dotenv
-from animals_chat.prompts import return_instructions_root
+#from animals_chat.prompts import return_instructions_root
 import json
 import requests
 from utils.logger import get_logger

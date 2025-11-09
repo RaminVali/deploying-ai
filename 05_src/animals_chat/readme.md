@@ -1,3 +1,3 @@
-# Simple Chat Implementation
+# Jarvis the Research Assistant
 
-This simple chat app, establishes a connection with OpenAI's chat API, but using a local Gradio interface. The intent is to demonstrate how to interact with the Chat Interface provided by Gradio.
+In this project we make Jarvis a chatbot research assistant that can do API calls to arxiv (can expand it later if I have time as semantic scholar is free). This is the first service. 
