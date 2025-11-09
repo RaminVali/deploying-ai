@@ -6,7 +6,7 @@ from langchain_core.messages import AnyMessage, SystemMessage, ToolMessage, Huma
 from typing_extensions import TypedDict, Annotated
 from assignment_chat.prompts import return_instructions_root
 import operator
-
+from openai import OpenAI
 import requests
 import json
 import xmltodict
@@ -135,7 +135,7 @@ def get_arxiv_info(search_query = None,start = 0, max_results = None):
     return papers
 
 
-@tool
+@tool # This is service 2 for the semantic search with ChromaDB
 def semantic_paper_search(query: str, n_results: int = 5, after_year: int = None, category: str = None):
     """
     Performs a semantic search over a local ArXiv metadata dataset using ChromaDB.
@@ -187,19 +187,51 @@ def semantic_paper_search(query: str, n_results: int = 5, after_year: int = None
     return matches
 
 
+# Service 3 (Websearch)
+@tool
+def web_search(query: str, n_results: int = 5):
+    """
+    Performs a web search using OpenAI Responses API (web search).
+    Returns top search results with title, URL, and snippet.
+    """
+
+    client = OpenAI()
+    response = client.responses.create(
+        model="gpt-4o-mini",
+        input=f"Search the web for: {query}\nReturn top {n_results} results with title, URL, and summary."
+    )
+    results = []
+    if hasattr(response, "output"):
+        for item in response.output:
+            if hasattr(item, "content"):
+                for c in item.content:
+                    if c.type == "output_text":
+                        results.append({"summary": c.text})
+                    elif c.type == "source_attribution":
+                        results.append({
+                            "title": c.metadata.get("title", ""),
+                            "url": c.metadata.get("url", ""),
+                            "summary": c.metadata.get("snippet", "")
+                        })
+    return results[:n_results]
+
+
 def get_model_with_tools():
     model = init_chat_model(
         "openai:gpt-4o-mini",
         temperature=0.7
     )
     # Augment the LLM with tools
-    tools = [get_arxiv_info,semantic_paper_search]
+    tools = [get_arxiv_info,semantic_paper_search, web_search]
     model_with_tools = model.bind_tools(tools)
     return model_with_tools
+
 
 class MessagesState(TypedDict):
     messages: Annotated[list[AnyMessage], operator.add]
     llm_calls: int
+
+
 
 def llm_call(state: dict):
     """LLM decides whether to call a tool or not"""
@@ -219,7 +251,7 @@ def llm_call(state: dict):
     }
 
 
-
+#Service 1 (API Call)
 def tool_node_api_call(state: dict):
     """Performs the tool call — expands user query, retrieves arXiv papers, and summarizes them."""
 
@@ -345,8 +377,40 @@ def tool_node_semantic(state: dict):
         result.append(ToolMessage(content=papers_str, tool_call_id=tool_call["id"]))
     return {"messages": result}
 
+# Service 3 (Websearch)
+def tool_node_web_search(state: dict):
+    tools = [web_search]
+    tools_by_name = {tool.name: tool for tool in tools}
+    result = []
+    last_msg = state["messages"][-1]
+    if not hasattr(last_msg, "tool_calls") or not last_msg.tool_calls:
+        return {"messages": []}
 
-def should_continue(state: MessagesState) -> Literal["tool_node_api_call","tool_node_semantic", END]:
+    model_with_tools = get_model_with_tools()
+
+    for tool_call in last_msg.tool_calls:
+        tool = tools_by_name.get(tool_call["name"])
+        if not tool:
+            continue
+
+        search_results = tool.invoke(tool_call["args"])
+        results_str = "\n\n".join(
+            f"🔹 {r.get('title','')}\nURL: {r.get('url','')}\nSummary: {r.get('summary','')}"
+            for r in search_results
+        )
+
+        summary_response = model_with_tools.invoke([
+            SystemMessage(content="You are Jarvis, a research assistant. Summarize the key trends and insights from these web search results."),
+            HumanMessage(content=results_str)
+        ])
+
+        result.append(ToolMessage(content=summary_response.content, tool_call_id=tool_call["id"]))
+
+        last_msg.tool_calls = []
+        return {"messages": result}
+
+
+def should_continue(state: MessagesState) -> Literal["tool_node_api_call","tool_node_semantic", "tool_node_mcp", END]:
     """Decide if we should continue the loop or stop based upon whether the LLM made a tool call"""
     messages = state["messages"]
     last_message = messages[-1]  
@@ -359,6 +423,8 @@ def should_continue(state: MessagesState) -> Literal["tool_node_api_call","tool_
         return "tool_node_api_call"
     elif "semantic_paper_search" in tool_names:
         return "tool_node_semantic"
+    elif "web_search" in tool_names:
+        return "tool_node_web_search"
 
     return END
 
@@ -371,14 +437,28 @@ def get_assignment_chat_agent():
     agent_builder.add_node("llm_call", llm_call)
     agent_builder.add_node("tool_node_api_call", tool_node_api_call)
     agent_builder.add_node("tool_node_semantic", tool_node_semantic)
+    agent_builder.add_node("tool_node_web_search", tool_node_web_search)
+
 
     # Add edges to connect nodes
     agent_builder.add_edge(START, "llm_call")
+    agent_builder.add_edge("tool_node_api_call", "llm_call")
+    agent_builder.add_edge("tool_node_semantic", "llm_call")
+    agent_builder.add_edge("tool_node_web_search", "llm_call")
+
     agent_builder.add_conditional_edges(
         "llm_call",
         should_continue,
-        ["tool_node_api_call","tool_node_semantic", END]
+        ["tool_node_api_call","tool_node_semantic","tool_node_web_search", END]
     )
-    agent_builder.add_edge("tool_node_api_call", "llm_call")
-    agent_builder.add_edge("tool_node_semantic", "llm_call")
-    return agent_builder.compile()
+    # Compile
+    agent = agent_builder.compile()
+
+    # Save image
+    graph_bytes =  agent.get_graph(xray=True).draw_mermaid_png()
+    output_file_path = os.path.join(BASE_DIR,"agent_graph.png")
+    with open(output_file_path, "wb") as f:
+        f.write(graph_bytes)
+    print(f"Graph saved as {output_file_path}")
+
+    return agent   

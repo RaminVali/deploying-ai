@@ -12,6 +12,7 @@ llm = get_assignment_chat_agent()
 
 load_dotenv('.secrets')  #When we are doing dot-env then we have to be in the right pATH, make sure your path is good. When you run the app then go to the top folder of the APP.
 
+#Check environment and API key
 if not os.environ.get("OPENAI_API_KEY"):
     raise ValueError("Missing OPENAI_API_KEY environment variable")
 
@@ -40,7 +41,12 @@ initial_message = (""" Hi, I am Jarvis your research assistant! \n\n
                    I can help you with:\n
                    - Searching papers directly from arXiv and giving literature reviews\n
                    - Performing a semantic search using my local database (15000 papers) you should mention my local db if you want searches performed there. \n
-                   - Third service\n\n
+                   - I can query the web and summarise the results I am getting for scientific and research areas.\n\n
+
+                    You can simply ask me questions like:\n
+                    - 'Show me the top papers on time series forecasting in 2025.'\n
+                    - 'Find papers on attention mechanisms in forecasting.'\n
+                    - 'Do a web search for the most recent trends on time series forecasting and summarise your results.'\n\n
                    
                    What would you like to do? """)
 
