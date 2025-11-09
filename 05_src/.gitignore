@@ -1,3 +1,3 @@
 .gradio
 .sqlite3
-05_src\assignment_chat\chromadb_store
+assignment_chat\chromadb_store

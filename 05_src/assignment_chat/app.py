@@ -37,17 +37,12 @@ def assignment_chat(message: str, history: list[dict]) -> str:
     response = llm.invoke(state)
     return response['messages'][len(response['messages']) - 1].content
 
-initial_message = (""" Hi, I am Jarvis your research assistant! \n\n
+# Add initial message so the user can see examples of using the product
+initial_message = (""" Hi, I am Jarvis your research assistant! \n
                    I can help you with:\n
-                   - Searching papers directly from arXiv and giving literature reviews\n
-                   - Performing a semantic search using my local database (15000 papers) you should mention my local db if you want searches performed there. \n
-                   - I can query the web and summarise the results I am getting for scientific and research areas.\n\n
-
-                    You can simply ask me questions like:\n
-                    - 'Show me the top papers on time series forecasting in 2025.'\n
-                    - 'Find papers on attention mechanisms in forecasting.'\n
-                    - 'Do a web search for the most recent trends on time series forecasting and summarise your results.'\n\n
-                   
+                   - Searching papers directly from arXiv API and giving literature reviews\n
+                   - Performing a semantic search using my local arXiv database (15000 papers) you should mention my local db if you want searches performed there. \n
+                   - I can query the web and summarise the results I am getting for scientific and research areas.\n
                    What would you like to do? """)
 
 chat = gr.ChatInterface(
@@ -55,7 +50,6 @@ chat = gr.ChatInterface(
     type="messages",
     chatbot=gr.Chatbot(placeholder= initial_message, type='messages'),
 )
-
 
 if __name__ == "__main__":
     _logs.info('Starting Assignment Chat App...')

@@ -1,32 +1,32 @@
+# Utils
 from typing import Literal
+from dotenv import load_dotenv
+import operator
+import requests
+import json
+import xmltodict
+import pandas as pd
+import requests
+from utils.logger import get_logger
+import os
+from typing_extensions import TypedDict, Annotated
+#LLMS
+from openai import OpenAI
 from langgraph.graph import StateGraph, START, END
 from langchain.chat_models import init_chat_model
 from langchain.tools import tool
 from langchain_core.messages import AnyMessage, SystemMessage, ToolMessage, HumanMessage
-from typing_extensions import TypedDict, Annotated
-from assignment_chat.prompts import return_instructions_root
-import operator
-from openai import OpenAI
-import requests
-import json
-import xmltodict
-
-
-from dotenv import load_dotenv
-import json
-import requests
-from utils.logger import get_logger
-import os
 from langchain.tools import tool
-from langchain_openai import OpenAIEmbeddings
+#RAG
 import chromadb
-import pandas as pd
+#Prompt
+from assignment_chat.prompts import return_instructions_root
 
 _logs = get_logger(__name__)
-
+#Get API Key
 load_dotenv(".env")
 load_dotenv(".secrets")
-
+#Set directories
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # folder of main.py or create_embeddings.py
 DATA_DIR = os.path.join(BASE_DIR, "data")
 CSV_PATH = os.path.join(DATA_DIR, "arXiv_scientific_dataset.csv")
@@ -37,7 +37,7 @@ def get_arxiv_info(search_query = None,start = 0, max_results = None):
     Returns max_results papers from the arxiv API, each paper contains the author name, titles affiliations and a paper summary.
     """
 
-    def xml_to_json_from_text(xml_text: str) -> dict:
+    def xml_to_json_from_text(xml_text: str) -> dict: #need this as arxiv gives xml outputs.
         """
         Converts XML text (e.g., from an API response) into a JSON-compatible dict.
         Automatically handles XML namespaces and nested structures.
@@ -52,6 +52,7 @@ def get_arxiv_info(search_query = None,start = 0, max_results = None):
         return json.loads(json_str)
 
     def extract_arxiv_papers(arxiv_dict):
+        """Extracts relevant paper features from the json response"""
         feed_key = "http://www.w3.org/2005/Atom:feed"
         entry_key = "http://www.w3.org/2005/Atom:entry"
         author_key = "http://www.w3.org/2005/Atom:author"
@@ -112,8 +113,6 @@ def get_arxiv_info(search_query = None,start = 0, max_results = None):
 
         return papers
 
-
-
     # Base api query url
     base_url = 'http://export.arxiv.org/api/query?';
 
@@ -121,9 +120,7 @@ def get_arxiv_info(search_query = None,start = 0, max_results = None):
                                                         start,
                                                         max_results)
 
-
     # # perform a GET request using the base_url and query
-    # response = urllib.urlopen(base_url+query).read()
     response = requests.get(base_url, params=query)
     #print(response.text)
 
@@ -157,21 +154,6 @@ def semantic_paper_search(query: str, n_results: int = 5, after_year: int = None
     if category:
         df = df[df["category"].str.contains(category, case=False, na=False)]
 
-
-    # df = df.drop_duplicates(subset=["title", "summary"], keep="first").reset_index(drop=True)
-    # # Create an in-memory index of filtered docs
-    # ids = df["id"].astype(str).tolist()
-    # metadatas = df[["title", "authors", "published_date", "category"]].to_dict("records")
-    # documents = df["summary"].fillna("").astype(str).tolist()
-
-
-    # # Ensure collection contains this data (idempotent upsert)
-    # collection.upsert(
-    #     ids=ids,
-    #     documents=documents,
-    #     metadatas=metadatas
-    # )
-
     # Embed query and perform semantic search
     results = collection.query(query_texts=[query], n_results=n_results)
     matches = []
@@ -187,7 +169,7 @@ def semantic_paper_search(query: str, n_results: int = 5, after_year: int = None
     return matches
 
 
-# Service 3 (Websearch)
+# Service 3 (Websearch), This is service 3
 @tool
 def web_search(query: str, n_results: int = 5):
     """
@@ -217,6 +199,7 @@ def web_search(query: str, n_results: int = 5):
 
 
 def get_model_with_tools():
+    """Binding the tools to the model"""
     model = init_chat_model(
         "openai:gpt-4o-mini",
         temperature=0.7
@@ -226,11 +209,9 @@ def get_model_with_tools():
     model_with_tools = model.bind_tools(tools)
     return model_with_tools
 
-
 class MessagesState(TypedDict):
     messages: Annotated[list[AnyMessage], operator.add]
     llm_calls: int
-
 
 
 def llm_call(state: dict):
@@ -250,10 +231,9 @@ def llm_call(state: dict):
         "llm_calls": state.get('llm_calls', 0) + 1
     }
 
-
 #Service 1 (API Call)
 def tool_node_api_call(state: dict):
-    """Performs the tool call — expands user query, retrieves arXiv papers, and summarizes them."""
+    """Performs the tool call — expands user query, retrieves arXiv papers, and summarises them."""
 
     tools = [get_arxiv_info]
     tools_by_name = {tool.name: tool for tool in tools}
@@ -379,6 +359,7 @@ def tool_node_semantic(state: dict):
 
 # Service 3 (Websearch)
 def tool_node_web_search(state: dict):
+    """ Does an OpenAI web search and then summarises the results"""
     tools = [web_search]
     tools_by_name = {tool.name: tool for tool in tools}
     result = []
@@ -408,7 +389,6 @@ def tool_node_web_search(state: dict):
 
         last_msg.tool_calls = []
         return {"messages": result}
-
 
 def should_continue(state: MessagesState) -> Literal["tool_node_api_call","tool_node_semantic", "tool_node_mcp", END]:
     """Decide if we should continue the loop or stop based upon whether the LLM made a tool call"""
