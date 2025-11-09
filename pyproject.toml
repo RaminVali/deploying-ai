@@ -43,4 +43,6 @@ dependencies = [
     "pypdf>=6.1.1",
     "numexpr>=2.14.1",
     "langchain-tavily>=0.2.12",
+    "feedparser>=6.0.12",
+    "xmltodict>=1.0.2",
 ]

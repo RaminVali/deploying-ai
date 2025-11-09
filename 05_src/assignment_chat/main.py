@@ -5,7 +5,6 @@ from langchain.tools import tool
 from langchain_core.messages import AnyMessage, SystemMessage, ToolMessage, HumanMessage
 from typing_extensions import TypedDict, Annotated
 from assignment_chat.prompts import return_instructions_root
-#from research_api_calls import get_arxiv_info
 import operator
 
 import requests
@@ -18,17 +17,22 @@ import json
 import requests
 from utils.logger import get_logger
 import os
-
+from langchain.tools import tool
+from langchain_openai import OpenAIEmbeddings
+import chromadb
+import pandas as pd
 
 _logs = get_logger(__name__)
 
 load_dotenv(".env")
 load_dotenv(".secrets")
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # folder of main.py or create_embeddings.py
+DATA_DIR = os.path.join(BASE_DIR, "data")
+CSV_PATH = os.path.join(DATA_DIR, "arXiv_scientific_dataset.csv")
 
-
-@tool
-def get_arxiv_info(search_query = 'all:electron',start = 0, max_results = 5):# search for electron in all fields # retreive the first 5 results
+@tool #This is Service 1 API Call to Arxiv, I construct the prompt using the LLM too, and output a structured output from all the papers using the LLM.
+def get_arxiv_info(search_query = None,start = 0, max_results = None):
     """
     Returns max_results papers from the arxiv API, each paper contains the author name, titles affiliations and a paper summary.
     """
@@ -131,6 +135,57 @@ def get_arxiv_info(search_query = 'all:electron',start = 0, max_results = 5):# s
     return papers
 
 
+@tool
+def semantic_paper_search(query: str, n_results: int = 5, after_year: int = None, category: str = None):
+    """
+    Performs a semantic search over a local ArXiv metadata dataset using ChromaDB.
+    Filters by year or category if provided.
+    Returns top matches with title, authors, year, and summary.
+    """
+
+    # Initialize embeddings + client (persistent Chroma)
+    client = chromadb.PersistentClient(path="./chromadb_store")
+    collection = client.get_or_create_collection("arxiv_metadata")
+
+    # Load CSV metadata
+    df = pd.read_csv(CSV_PATH, low_memory=False)
+    print(f"Loaded {len(df)} rows from {CSV_PATH}")
+
+    # Apply optional filters
+    if after_year:
+        df = df[df["year"] >= after_year]
+    if category:
+        df = df[df["category"].str.contains(category, case=False, na=False)]
+
+
+    # df = df.drop_duplicates(subset=["title", "summary"], keep="first").reset_index(drop=True)
+    # # Create an in-memory index of filtered docs
+    # ids = df["id"].astype(str).tolist()
+    # metadatas = df[["title", "authors", "published_date", "category"]].to_dict("records")
+    # documents = df["summary"].fillna("").astype(str).tolist()
+
+
+    # # Ensure collection contains this data (idempotent upsert)
+    # collection.upsert(
+    #     ids=ids,
+    #     documents=documents,
+    #     metadatas=metadatas
+    # )
+
+    # Embed query and perform semantic search
+    results = collection.query(query_texts=[query], n_results=n_results)
+    matches = []
+    for i in range(len(results["documents"][0])):
+        matches.append({
+            "title": results["metadatas"][0][i]["title"],
+            "authors": results["metadatas"][0][i]["authors"],
+            "published_date": results["metadatas"][0][i]["published_date"],
+            "category": results["metadatas"][0][i]["category"],
+            "summary": results["documents"][0][i]
+        })
+
+    return matches
+
 
 def get_model_with_tools():
     model = init_chat_model(
@@ -138,7 +193,7 @@ def get_model_with_tools():
         temperature=0.7
     )
     # Augment the LLM with tools
-    tools = [get_arxiv_info]
+    tools = [get_arxiv_info,semantic_paper_search]
     model_with_tools = model.bind_tools(tools)
     return model_with_tools
 
@@ -154,7 +209,7 @@ def llm_call(state: dict):
             model_with_tools.invoke(
                 [
                     SystemMessage(
-                        content="You are a helpful research assistant tasked with looking up scientific papers about topics and returning with a concice summary of the abstracts of this papers."
+                        content=return_instructions_root()
                     )
                 ]
                 + state["messages"]
@@ -165,7 +220,7 @@ def llm_call(state: dict):
 
 
 
-def tool_node(state: dict):
+def tool_node_api_call(state: dict):
     """Performs the tool call — expands user query, retrieves arXiv papers, and summarizes them."""
 
     tools = [get_arxiv_info]
@@ -176,7 +231,7 @@ def tool_node(state: dict):
 
     last_msg = state["messages"][-1]
     if not hasattr(last_msg, "tool_calls") or not last_msg.tool_calls:
-        _logs.info("No new tool calls found. Skipping tool_node execution.")
+        _logs.info("No new tool calls found. Skipping tool_node_api_call execution.")
         return {"messages": []}  # prevents recursion
 
     user_query = ""
@@ -259,19 +314,52 @@ def tool_node(state: dict):
 
     return {"messages": result}
 
+#Service 2 (Semantic search) tool node
+def tool_node_semantic(state: dict):
+    """Runs the semantic paper search  (dataset in chromaDB)"""
+
+    tools = [semantic_paper_search]
+    tools_by_name = {tool.name: tool for tool in tools}
+    result = []
+
+    last_msg = state["messages"][-1]
+    if not hasattr(last_msg, "tool_calls") or not last_msg.tool_calls:
+        _logs.info("No semantic tool calls found.")
+        return {"messages": []}
+
+    for tool_call in last_msg.tool_calls:
+        tool = tools_by_name.get(tool_call["name"])
+        if not tool:
+            _logs.warning(f"Unknown tool: {tool_call['name']}")
+            continue
+
+        papers = tool.invoke(tool_call["args"])
+        papers_str = "\n\n".join(
+            f"🔹 {p['title']} ({p['year']})\n"
+            f"Authors: {p['authors']}\n"
+            f"Category: {p['category']}\n"
+            f"Summary: {p['summary']}"
+            for p in papers
+        )
+
+        result.append(ToolMessage(content=papers_str, tool_call_id=tool_call["id"]))
+    return {"messages": result}
 
 
-def should_continue(state: MessagesState) -> Literal["tool_node", END]:
+def should_continue(state: MessagesState) -> Literal["tool_node_api_call","tool_node_semantic", END]:
     """Decide if we should continue the loop or stop based upon whether the LLM made a tool call"""
-
     messages = state["messages"]
-    last_message = messages[-1]
+    last_message = messages[-1]  
 
-    # If the LLM makes a tool call, then perform an action
-    if last_message.tool_calls:
-        return "tool_node"
+    if not hasattr(last_message, "tool_calls") or not last_message.tool_calls:
+        return END
 
-    # Otherwise, we stop (reply to the user)
+    tool_names = [t["name"] for t in last_message.tool_calls]
+    if "get_arxiv_info" in tool_names:
+        return "tool_node_api_call"
+    elif "semantic_paper_search" in tool_names:
+        return "tool_node_semantic"
+
     return END
 
 def get_assignment_chat_agent():
@@ -281,14 +369,16 @@ def get_assignment_chat_agent():
 
     # Add nodes
     agent_builder.add_node("llm_call", llm_call)
-    agent_builder.add_node("tool_node", tool_node)
+    agent_builder.add_node("tool_node_api_call", tool_node_api_call)
+    agent_builder.add_node("tool_node_semantic", tool_node_semantic)
 
     # Add edges to connect nodes
     agent_builder.add_edge(START, "llm_call")
     agent_builder.add_conditional_edges(
         "llm_call",
         should_continue,
-        ["tool_node", END]
+        ["tool_node_api_call","tool_node_semantic", END]
     )
-    agent_builder.add_edge("tool_node", "llm_call")
+    agent_builder.add_edge("tool_node_api_call", "llm_call")
+    agent_builder.add_edge("tool_node_semantic", "llm_call")
     return agent_builder.compile()

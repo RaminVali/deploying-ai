@@ -36,10 +36,20 @@ def assignment_chat(message: str, history: list[dict]) -> str:
     response = llm.invoke(state)
     return response['messages'][len(response['messages']) - 1].content
 
+initial_message = (""" Hi, I am Jarvis your research assistant! \n\n
+                   I can help you with:\n
+                   - Searching papers directly from arXiv and giving literature reviews\n
+                   - Performing a semantic search using my local database (15000 papers) you should mention my local db if you want searches performed there. \n
+                   - Third service\n\n
+                   
+                   What would you like to do? """)
+
 chat = gr.ChatInterface(
     fn=assignment_chat,
-    type="messages"
+    type="messages",
+    chatbot=gr.Chatbot(placeholder= initial_message, type='messages'),
 )
+
 
 if __name__ == "__main__":
     _logs.info('Starting Assignment Chat App...')
